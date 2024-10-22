@@ -6,7 +6,6 @@ import (
 	"log"
 	"math/rand"
 	"regexp"
-	"strconv"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -41,6 +40,7 @@ type Monster struct {
 	Def      int
 	XP       int
 	Gold     int
+	Boss     bool
 }
 
 type Class struct {
@@ -188,8 +188,11 @@ func handleMessage(bot *tgbotapi.BotAPI, db *sql.DB, message *tgbotapi.Message) 
 		}
 		handleAttack(bot, db, player, monster, message.Chat.ID, message)
 	case "Лечение":
-		if potion(message.Chat.ID, 1) < 3 {
-			handleHeal(bot, db, player, message.Chat.ID)
+		if countPotion[message.Chat.ID] > 0 {
+			pot := potion(message.Chat.ID, 1)
+			if pot >= -1 {
+				handleHeal(bot, db, player, message.Chat.ID)
+			}
 		}
 		// itemsMenu(bot, db, message.Chat.ID, message, player)
 	case "Убежать":
@@ -207,6 +210,8 @@ func handleMessage(bot *tgbotapi.BotAPI, db *sql.DB, message *tgbotapi.Message) 
 		showTavern(bot, message.Chat.ID)
 	case "Уйти":
 		showMenu(bot, message.Chat.ID)
+	case classes[player.Class].Button.Name:
+
 	}
 }
 
@@ -232,6 +237,7 @@ func startGame(bot *tgbotapi.BotAPI, db *sql.DB, message *tgbotapi.Message) {
 				addPlayer(db, message.From.ID, message.From.UserName, class)
 				msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Вы выбрали класс: %s!", class))
 				bot.Send(msg)
+				potion(message.Chat.ID, -1)
 				showMenuBattle(bot, db, message.Chat.ID)
 				break stop
 			}
@@ -381,26 +387,15 @@ func handleAttack(bot *tgbotapi.BotAPI, db *sql.DB, player *Player, monster *Mon
 			updatePlayer(db, player)
 			delete(MonsterHP, chatID) // удаляем прошлого монстра
 
-			var item string
-			r := randItems()
-			sel := selectItems(db, strconv.Itoa(r), int(chatID))
-			if sel.Name != "" {
-				count := sel.Count + 1
-				updateItems(db, strconv.Itoa(r), int(chatID), count)
-				sel := selectItems(db, strconv.Itoa(r), int(chatID))
-				item = fmt.Sprintf("Получен предмет: %s(x%d)", sel.Name, sel.Count)
-			} else {
-				i := items[strconv.Itoa(r)]
-				add := addItems(db, strconv.Itoa(r), int(chatID))
-				if add != "" {
-					item = fmt.Sprintf("Получен предмет: %s(x%d)", i.Name, i.Count)
-				}
-			}
-
-			msg = tgbotapi.NewMessage(chatID, fmt.Sprintf("Вы победили %s!\nЗолото: %d, Опыт: %d\n%s",
-				monster.Name, player.Gold, player.XP, item))
+			msg = tgbotapi.NewMessage(chatID, fmt.Sprintf("Вы победили %s!\nЗолото: %d, Опыт: %d",
+				monster.Name, player.Gold, player.XP))
 			bot.Send(msg)
 			showMenuBattle(bot, db, chatID)
+
+			// если босс и побеждем отправляем в меню
+			if monster.Boss {
+				showMenu(bot, chatID)
+			}
 		}
 
 		if player.HP <= 0 {
@@ -409,6 +404,7 @@ func handleAttack(bot *tgbotapi.BotAPI, db *sql.DB, player *Player, monster *Mon
 			deletePlayer(db, player.ID) // после смерти удаляем героя
 			startGame(bot, db, message)
 			delete(counts, chatID) // после смерти удаляем подсчет монстров
+			delete(countPotion, chatID)
 		}
 	}
 }
@@ -463,11 +459,18 @@ func deletePlayer(db *sql.DB, playerID int) {
 // monster
 func getMonsterLite(stage int) *Monster {
 	monsters := []Monster{
-		{"Гоблин", 50, 5, 5, 10, 3},
-		{"Орк", 70, 10, 7, 8, 5},
-		{"Мумия", 75, 13, 6, 6, 6},
-		{"🧟‍♀️ Вурдолак", 45, 4, 8, 7, 4},
-		{"💀 Скелет воин", 65, 11, 9, 8, 2},
+		{"Гоблин", 50, 7, 5, 10, 3, false},
+		{"Орк", 70, 10, 7, 8, 5, false},
+		{"Мумия", 75, 13, 6, 6, 6, false},
+		{"🧟‍♀️ Вурдолак", 45, 6, 8, 7, 4, false},
+		{"💀 Скелет воин", 65, 9, 9, 8, 2, false},
+		// Name:     "",
+		// HP:       0,
+		// AtkPower: 0,
+		// Def:      0,
+		// XP:       XPPerLevel,
+		// Gold:     0,
+		// Boss: bool
 	}
 
 	rand.NewSource(time.Now().UnixNano())
@@ -477,16 +480,17 @@ func getMonsterLite(stage int) *Monster {
 // Boss
 func getMonsterBoss(stage int) *Monster {
 	monsters := []Monster{
-		{"Дракон", 260, 20, 20, 20, 15},
-		{"Дракула", 200, 27, 15, 17, 9},
-		{"Троль", 210, 29, 17, 26, 8},
-		{"Минотавр", 250, 35, 18, 28, 6},
+		{"Дракон", 260, 16, 8, 20, 15, true},
+		{"Дракула", 200, 17, 5, 17, 9, true},
+		{"Троль", 210, 15, 7, 26, 8, true},
+		{"Минотавр", 250, 15, 6, 28, 6, true},
 		// Name:     "",
 		// HP:       0,
 		// AtkPower: 0,
 		// Def:      0,
 		// XP:       XPPerLevel,
 		// Gold:     0,
+		// Boss: bool
 	}
 
 	rand.NewSource(time.Now().UnixNano())
@@ -590,11 +594,21 @@ func parseEmoji(text string) string {
 
 // прибавляем 1 потион до нужного количества
 func potion(chatID int64, count int) int {
-	if countPotion[chatID] != 0 {
-		countPotion[chatID] -= count
-	} else if count == -1 {
-		countPotion[chatID] += 3
+	// cou := countPotion[chatID]
+	// добавляем 3 потиона
+	if count == -1 {
+		delete(countPotion, chatID)
+		countPotion[chatID] += 2
 	}
+	// Проверяем, если количество зелья для chatID равно 0
+	if countPotion[chatID] <= 0 {
+		return countPotion[chatID] // Возвращаем текущее значение (0 или меньше)
+	}
+
+	if countPotion[chatID] > 0 {
+		countPotion[chatID] -= count
+	}
+
 	return countPotion[chatID]
 }
 
@@ -613,7 +627,7 @@ func calculateDamage(attacker Class, target Monster) (int, string) {
 	}
 
 	// Критический удар (пример: шанс крита = 20%)
-	critChance := 0.2 // 20% шанс на крит
+	critChance := 0.1 // 20% шанс на крит
 	isCrit := rand.Float64() <= critChance
 
 	// Множитель крита (обычно это 2x, но может быть другим)
@@ -628,4 +642,8 @@ func calculateDamage(attacker Class, target Monster) (int, string) {
 	finalDamage := int(float64(baseDamage) * randomFactor)
 
 	return finalDamage, text
+}
+
+func ultimate(chatID int64, player *Player) {
+
 }
