@@ -639,58 +639,6 @@ func countKillPlayer(chaID int64, count int) int {
 	return counts[chaID]
 }
 
-// add items table
-func addItems(db *sql.DB, item string, playerID int) string {
-	i := items[item]
-	// проверяем что предмет есть в списке
-	if i.Name == "" {
-		return ""
-	}
-	query := `INSERT INTO items (id, name, param, count) VALUES (?, ?, ?, ?)`
-	_, err := db.Exec(query, playerID, i.Name, i.Param, i.Count)
-	if err != nil {
-		log.Fatal("addItems: ", err)
-	}
-	return i.Name
-}
-
-func updateItems(db *sql.DB, item string, playerID int, count int) int {
-	i := items[item]
-	query := `UPDATE items SET count = ? WHERE id = ? AND name = ?`
-	_, err := db.Exec(query, count, playerID, i.Name)
-	if err != nil {
-		log.Fatal("updateItems: ", err)
-	}
-	return i.Count
-}
-
-func selectItems(db *sql.DB, item string, playerID int) Items {
-	i := items[item]
-	var it Items
-	_ = db.QueryRow(`SELECT id, name, param, count FROM items WHERE id = ? AND name = ?`, playerID, i.Name).Scan(
-		&it.ID, &it.Name, &it.Param, &it.Count,
-	)
-	return it
-}
-
-func getItems(db *sql.DB, playerID int) []Items {
-	var it Items
-	var its []Items
-	row, err := db.Query(`SELECT id, name, param, count FROM items WHERE id = ?`, playerID)
-	if err != nil {
-		log.Fatalln("getItems ", err)
-	}
-	for row.Next() {
-		row.Scan(&it.ID, &it.Name, &it.Param, &it.Count)
-		its = append(its, it)
-	}
-	return its
-}
-
-func randItems() int {
-	return rand.Intn(len(items) + 5)
-}
-
 func showTavern(bot *tgbotapi.BotAPI, chatID int64) {
 	// tgbotapi.NewSticker(chatID, tgbotapi.FileID(""))
 	say := []string{`Громкий скрип половиц прервал гул таверны, когда тяжёлый сапог ступил на порог. Взгляд каждого обитателя в мгновение ока устремился к фигуре в плаще. Шепот пронесся по залу, а трактирщик, зловеще прищурившись, убрал кружку с пивом, словно не замечая пришедшего. "Тебя здесь не ждали", — прорычал он.`,
