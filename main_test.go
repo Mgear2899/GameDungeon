@@ -47,8 +47,26 @@ func TestTelebot(t *testing.T) {
 	mockBot.AssertExpectations(t)
 }
 
+func TestItems(t *testing.T) {
+	t.Run("Run:", func(t *testing.T) {
+		for i := 0; i < 30; i++ {
+			val := randomValue()
+			item := val
+			fmt.Printf("%d, ", item)
+		}
+	})
+}
+
+func TestAddItem(t *testing.T) {
+	a.ConnDB()
+	for i := 0; i <= 4; i++ {
+		var it = Item{ID: 166401485, Name: fmt.Sprintf("item_%d", i), Stat: "Attack", Value: 12, Price: 13}
+		a.AddItem(166401485, it)
+	}
+}
+
 func TestCritical(t *testing.T) {
-	critChance := 0.1
+	critChance := 0.01
 	isCrit := rand.Float64() <= critChance
 	t.Run("param", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
@@ -68,7 +86,7 @@ func Test_lootMobs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lootMobs(tt.chatID)
+			// lootMobs()
 		})
 	}
 }

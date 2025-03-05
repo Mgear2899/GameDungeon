@@ -4,11 +4,19 @@ import (
 	"fmt"
 )
 
+// id INTEGER PRIMARY KEY AUTOINCREMENT,
+// name TEXT NOT NULL,
+// description TEXT NOT NULL,
+// reward TEXT NOT NULL,
+// status TEXT NOT NULL,
+// required_items TEXT
 type Quest struct {
-	Name     string
-	Body     string
-	Progress bool
-	ID       int
+	ID             int
+	Name           string
+	Description    string
+	Reward         string
+	Status         string
+	Required_items string
 }
 
 func (a *App) getQuest(id int) ([]string, error) {
@@ -20,8 +28,8 @@ func (a *App) getQuest(id int) ([]string, error) {
 
 	var arrQ []string
 	for rows.Next() {
-		rows.Scan(&q.Name, &q.Body, &q.Progress, &q.ID)
-		quest := fmt.Sprintf("%s: %s\n", q.Name, q.Body)
+		rows.Scan(&q.Name, &q.ID, &q.Description, &q.Name)
+		quest := fmt.Sprintf("%s: %s\n", q.Name, q.Description)
 		arrQ = append(arrQ, quest)
 	}
 	return arrQ, nil

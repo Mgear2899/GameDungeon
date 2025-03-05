@@ -3,32 +3,37 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	_ "github.com/mattn/go-sqlite3"
+	// _ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type Player struct {
-	ID        int
-	Name      string
-	Class     string
-	HP        int
-	Attack    int
-	Defense   int
-	Gold      int
-	Stage     int
-	XP        int
-	Level     int
-	Count     int
-	MaxHP     int
-	Inventory []Item
+	ID            int
+	Name          string
+	Class         string
+	HP            int
+	Attack        int
+	Defense       int
+	Gold          int
+	Stage         int
+	XP            int
+	Level         int
+	Count         int
+	MaxHP         int
+	Inventory     []Item
+	EquippedItems []Item
 }
 
 type Item struct {
+	ID    int
 	Name  string
 	Stat  string
 	Value int
@@ -69,9 +74,21 @@ const XPPerLevel = 180
 var counts = make(map[int64]int)
 var countPotion = make(map[int64]int)
 var MonsterHP = make(map[int64]*stateFight)
-var ItemMap = make(map[int64]*Item)
+var ItemMap = make(map[int64]Item)
+var ArrayItemShell = make(map[int64]int)
 
 var a App
+
+func telebot(bot *tgbotapi.BotAPI) tgbotapi.UpdatesChannel {
+	bot.Debug = false
+	log.Printf("Авторизовался аккаунт %s", bot.Self.UserName)
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
+
+	updates := bot.GetUpdatesChan(u)
+
+	return updates
+}
 
 func main() {
 	// Инициализация бота
@@ -90,23 +107,103 @@ func main() {
 
 	// Создание таблиц
 	a.createTablesAndDB()
+	a.DeleteTime()
 
 	for update := range updates {
 		if update.Message != nil {
 			handleMessage(bot, update.Message)
 		}
+
+		if update.CallbackQuery != nil {
+			handleCallbackQuery(bot, update.CallbackQuery)
+		}
 	}
 }
 
-func telebot(bot *tgbotapi.BotAPI) tgbotapi.UpdatesChannel {
-	bot.Debug = false
-	log.Printf("Авторизовался аккаунт %s", bot.Self.UserName)
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
+func handleCallbackQuery(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQuery) {
+	// Извлекаем данные из callback-запроса
+	data := callbackQuery.Data
 
-	updates := bot.GetUpdatesChan(u)
+	// Проверяем, что это за действие
+	if strings.HasPrefix(data, "action_") {
+		// Обработка действия с предметом
+		itemIDStr := strings.TrimPrefix(data, "action_")
+		itemID, err := strconv.Atoi(itemIDStr)
+		if err != nil {
+			log.Printf("Ошибка при преобразовании ID предмета: %v", err)
+			return
+		}
 
-	return updates
+		// Выполняем действие с предметом (например, выбираем его)
+		selectItem(bot, callbackQuery, itemID)
+	} else if data == "item_sell" {
+		// Обработка действия "Продать"
+		sellItems(bot, callbackQuery)
+	}
+
+	// Отправляем ответ на callback-запрос (чтобы убрать "часики" у кнопки)
+	callback := tgbotapi.NewCallback(callbackQuery.ID, "")
+	if _, err := bot.Request(callback); err != nil {
+		log.Printf("Ошибка при отправке ответа на callback: %v", err)
+	}
+}
+
+func selectItem(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQuery, itemID int) {
+	chatID := callbackQuery.Message.Chat.ID
+	ArrayItemShell[chatID] = itemID
+	// Обновляем сообщение с кнопками (если нужно)
+	editMsg := tgbotapi.NewEditMessageText(callbackQuery.Message.Chat.ID, callbackQuery.Message.MessageID, "Предметы:")
+	editMsg.ReplyMarkup = updateInlineKeyboard(callbackQuery.Message, itemID) // Функция для обновления клавиатуры
+	if _, err := bot.Send(editMsg); err != nil {
+		log.Printf("Ошибка при обновлении сообщения: %v", err)
+	}
+}
+
+func sellItems(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQuery) {
+	chatID := callbackQuery.Message.Chat.ID
+	itemID := ArrayItemShell[chatID]
+	if itemID > 0 {
+		item := a.PlayerItems(chatID)
+		for _, i := range item {
+			if i.ID == itemID {
+				a.plusPlayerGold(int(chatID), i.Price)
+				break
+			}
+		}
+		a.deleteItem(chatID, itemID)
+		delete(ArrayItemShell, chatID)
+		selectItem(bot, callbackQuery, 0)
+	}
+
+	callback := tgbotapi.NewCallback(callbackQuery.ID, "")
+	if _, err := bot.Request(callback); err != nil {
+		log.Printf("Ошибка при отправке ответа на callback: %v", err)
+	}
+}
+
+func updateInlineKeyboard(message *tgbotapi.Message, itemID int) *tgbotapi.InlineKeyboardMarkup {
+	var buttons []tgbotapi.InlineKeyboardButton
+
+	itemsp := a.PlayerItems(message.Chat.ID)
+	for _, i := range itemsp {
+		item := fmt.Sprintf("- %s (%s: +%d) 💰 - %d", i.Name, i.Stat, i.Value, i.Price)
+		button := tgbotapi.NewInlineKeyboardButtonData(item, fmt.Sprintf("action_%d", i.ID))
+		if itemID == i.ID { // Если элемент выбран, добавляем галочку
+			button.Text = "✅ " + item
+		}
+		buttons = append(buttons, button)
+	}
+
+	var inlineKeyboard [][]tgbotapi.InlineKeyboardButton
+	for i := 0; i < len(buttons); i += 1 {
+		inlineKeyboard = append(inlineKeyboard, []tgbotapi.InlineKeyboardButton{buttons[i]})
+	}
+
+	inlineKeyboard = append(inlineKeyboard, []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("Продать", "item_sell"),
+	})
+
+	return &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: inlineKeyboard}
 }
 
 func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
@@ -126,6 +223,7 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	monster = nextMonster(bot, message, step, player, delEmojiMessage)
 
 	getclass := a.getClass(player.Class)
+	i := ItemMap[message.Chat.ID]
 
 	// Основные действия игрока
 	switch delEmojiMessage {
@@ -156,7 +254,7 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		showTavern(bot, message.Chat.ID)
 	case "Снять номер":
 		showTavernRoom(bot, message)
-	case "Уйти":
+	case "Уйти", "Назад":
 		showMenu(bot, message.Chat.ID)
 	case "Статистика":
 		player.statisticPlayer(bot, message)
@@ -164,18 +262,66 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		delete(counts, message.Chat.ID)
 		showMenu(bot, message.Chat.ID)
 	case "Заплатить":
+		if !checkGold(player.Gold, 50) {
+			msg := tgbotapi.NewMessage(message.Chat.ID, "Золотишек то нет!")
+			bot.Send(msg)
+			return
+		}
 		a.updatePlayerGold(int(message.Chat.ID), 50)
 		handleHeal(bot, player, message)
 		showTavern(bot, message.Chat.ID)
-	case "Торговец", "Назад":
+	case "Покупка":
 		showShop(bot, message)
+	case "Продажа":
+		showShopPlayer(bot, message)
+		// получение предмета
 	case a.GetItem(message.Text).Name:
 		showItem(bot, message)
 	case "Купить":
-		a.updatePlayerGold(int(message.Chat.ID), 50)
+		if !checkGold(player.Gold, i.Price) {
+			msg := tgbotapi.NewMessage(message.Chat.ID, "Золотишек то нет!")
+			bot.Send(msg)
+			return
+		}
+		msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Преобретен предмет: %s", i.Name))
+		bot.Send(msg)
+		a.updatePlayerGold(int(message.Chat.ID), i.Price)
+		a.AddItem(message.Chat.ID, i)
+		delete(ItemMap, message.Chat.ID)
+		showShop(bot, message)
+	case "Инвентарь":
+		showInventory(bot, message)
+	case "Надеть":
+		handleEquipItem(bot, message)
+	case "Торговец":
+		choiceShop(bot, message)
 	}
 }
 
+// проверка суммы игрока
+func checkGold(summ int, summT int) bool {
+	return summ > summT
+}
+
+func choiceShop(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
+	rand.NewSource(time.Second.Microseconds())
+	say := []string{"Чего желаешь?", "Какие планы?", "Слушаю!", "Смотрю ты с барахлом!"}
+	buttons := tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("Покупка"),
+			tgbotapi.NewKeyboardButton("Продажа"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("Назад"),
+		),
+	)
+	sayR := rand.Intn(len(say))
+	msg := tgbotapi.NewMessage(message.Chat.ID, say[sayR])
+	msg.ReplyMarkup = buttons
+	bot.Send(msg)
+}
+
+// отображаем выбранный товар
 func showItem(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	item := a.GetItem(message.Text)
 
@@ -186,8 +332,9 @@ func showItem(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		),
 	)
 
-	str := "Предмет: %s\n%s - %d\nЦена - %d"
-	msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf(str, item.Name, item.Stat, item.Value, item.Price))
+	str := "Предмет: %s\n%s - %d ~ %d\nЦена - %d"
+	ItemMap[message.Chat.ID] = item
+	msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf(str, item.Name, item.Stat, item.Value, item.Value+27, item.Price))
 	msg.ReplyMarkup = buttons
 	bot.Send(msg)
 }
@@ -197,40 +344,37 @@ var ItemInt []int
 
 func showShop(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	timeMinute := 30 * time.Minute
-	item := a.GetItems()
+	items := a.GetItems()
 	timeNow := time.Now()
 	rand.NewSource(time.Now().Unix())
 
 	dur := a.TimeDuration("shop")
 
-	// если время вышло то обновляем прайс
-	if timeNow.After(dur) {
-		for i := 4; i > 0; i-- {
-			r := rand.Intn(len(item))
-			ItemInt = append(ItemInt, r)
-		}
-
-		a.UpdateTime("shop", timeMinute*time.Minute)
-	}
-
-	// если нет записи создаем в БД
 	if dur.IsZero() {
-		a.InsertTime("shop", timeMinute*time.Minute)
+		a.InsertTime("shop", timeMinute)
 
 		for i := 4; i > 0; i-- {
-			r := rand.Intn(len(item))
+			r := rand.Intn(len(items))
 			ItemInt = append(ItemInt, r)
 		}
+	} else if timeNow.After(dur) {
+		ItemInt = []int{} // чистим от прошлых значений
+		for i := 4; i > 0; i-- {
+			r := rand.Intn(len(items))
+			ItemInt = append(ItemInt, r)
+		}
+
+		a.UpdateTime("shop", timeMinute)
 	}
 
 	buttons := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton(item[ItemInt[0]].Name),
-			tgbotapi.NewKeyboardButton(item[ItemInt[1]].Name),
+			tgbotapi.NewKeyboardButton(items[ItemInt[0]].Name),
+			tgbotapi.NewKeyboardButton(items[ItemInt[1]].Name),
 		),
 		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton(item[ItemInt[2]].Name),
-			tgbotapi.NewKeyboardButton(item[ItemInt[3]].Name),
+			tgbotapi.NewKeyboardButton(items[ItemInt[2]].Name),
+			tgbotapi.NewKeyboardButton(items[ItemInt[3]].Name),
 		),
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("Уйти"),
@@ -239,6 +383,47 @@ func showShop(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, "Вот мои товары!")
 	msg.ReplyMarkup = buttons
+	bot.Send(msg)
+}
+
+func showShopPlayer(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
+	player := a.getPlayer(message.From.ID)
+	if player == nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "Ваши данные не найдены.")
+		bot.Send(msg)
+		return
+	}
+
+	var buttons []tgbotapi.InlineKeyboardButton
+
+	itemsp := a.PlayerItems(message.From.ID)
+	for _, i := range itemsp {
+		ArrayItemShell[message.From.ID] = i.ID
+
+		item := fmt.Sprintf("- %s (%s: +%d) 💰 - %d", i.Name, i.Stat, i.Value, i.Price)
+		button := tgbotapi.NewInlineKeyboardButtonData(item, fmt.Sprintf("action_%d", i.ID))
+		buttons = append(buttons, button)
+	}
+
+	if len(itemsp) < 1 {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "Предметов нет.")
+		bot.Send(msg)
+		return
+	}
+
+	// Создаём массив строк для кнопок
+	var inlineKeyboard [][]tgbotapi.InlineKeyboardButton
+	for i := 0; i < len(buttons); i += 1 { // Размещаем кнопки в столбик
+		inlineKeyboard = append(inlineKeyboard, []tgbotapi.InlineKeyboardButton{buttons[i]})
+	}
+
+	// Добавляем кнопку "Продать"
+	inlineKeyboard = append(inlineKeyboard, []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("Продать", "action_sell"),
+	})
+
+	msg := tgbotapi.NewMessage(message.Chat.ID, "Предметы:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(inlineKeyboard...)
 	bot.Send(msg)
 }
 
@@ -258,26 +443,26 @@ func showTavernRoom(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 
 func nextRoom(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	rand.NewSource(time.Now().UnixMicro())
-	texts := []string{"Ну что, монстр, как тебе мой уровень мастерства?",
-		"Еще один враг на моем пути! Неужели они не понимают, что я — герой?",
-		"Похоже, этот монстр не читал мой гайд по победе!",
-		"Снова победа! Как же скучно побеждать таких слабаков!",
-		"Монстр, ты был великолепен... в своих мечтах!",
-		"Я думал, будет сложнее. Может, в следующий раз выбери кого-то посильнее?",
-		"Еще один монстр в списке моих жертв. У кого-то явно неудачный день!",
-		"Этот монстр не знал, с кем связался. Теперь он знает!",
-		"Победа! Не забудьте оставить отзыв о моем мастерстве!",
-		"Монстр, ты был хорош, но, увы, я — лучше!",
-		"Тень повержена, но страх остается.",
-		"Каждая победа — это лишь шаг к новой тьме.",
-		"Монстр мертв, но его крики еще звучат в моей голове.",
-		"Смерть одного — это начало страха для других.",
-		"Я победил, но цена была высока.",
-		"Кровь на моих руках, и это лишь начало.",
-		"Победа — это иллюзия, скрывающая настоящую тьму.",
-		"Каждый враг, которого я убиваю, делает меня немного более бездушным.",
-		"Монстр пал, но его тень навсегда останется со мной.",
-		"Я победил, но в этом мире нет места для истинного триумфа."}
+	texts := []string{"💬Ну что, монстр, как тебе мой уровень мастерства?",
+		"💬Еще один враг на моем пути! Неужели они не понимают, что я — герой?",
+		"💬Похоже, этот монстр не читал мой гайд по победе!",
+		"💬Снова победа! Как же скучно побеждать таких слабаков!",
+		"💬Монстр, ты был великолепен... в своих мечтах!",
+		"💬Я думал, будет сложнее. Может, в следующий раз выбери кого-то посильнее?",
+		"💬Еще один монстр в списке моих жертв. У кого-то явно неудачный день!",
+		"💬Этот монстр не знал, с кем связался. Теперь он знает!",
+		"💬Победа! Не забудьте оставить отзыв о моем мастерстве!",
+		"💬Монстр, ты был хорош, но, увы, я — лучше!",
+		"💬Тень повержена, но страх остается.",
+		"💬Каждая победа — это лишь шаг к новой тьме.",
+		"💬Монстр мертв, но его крики еще звучат в моей голове.",
+		"💬Смерть одного — это начало страха для других.",
+		"💬Я победил, но цена была высока.",
+		"💬Кровь на моих руках, и это лишь начало.",
+		"💬Победа — это иллюзия, скрывающая настоящую тьму.",
+		"💬Каждый враг, которого я убиваю, делает меня немного более бездушным.",
+		"💬Монстр пал, но его тень навсегда останется со мной.",
+		"💬Я победил, но в этом мире нет места для истинного триумфа."}
 	r := rand.Intn(len(texts) + 20)
 	var text string
 	if r >= 20 {
@@ -295,12 +480,12 @@ func nextRoom(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		tgbotapi.NewKeyboardButton("Статистика"),
 	}
 
-	// Если randomValue равно 1, добавляем случайную кнопку
+	// Если randomValue равно 1, добавляем кнопку выход из подъземелья
 	if randomValue == 1 {
 		button = append(button, tgbotapi.NewKeyboardButton("Выйти из подземелья"))
 	}
 
-	msg := tgbotapi.NewMessage(message.Chat.ID, "💬"+text)
+	msg := tgbotapi.NewMessage(message.Chat.ID, text)
 	buttons := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(button...),
 	)
@@ -311,9 +496,9 @@ func nextRoom(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 func (player *Player) statisticPlayer(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	// Формируем сообщение с параметрами игрока
 	text := fmt.Sprintf(
-		"Игрок: %s Класс: %s\nHP: %d\nАтака: %d\nЗащита: %d\nЗолото: %d\nXP: %d\nУровень: %d\n",
-		player.Name, player.Class, player.HP, player.Attack, player.Defense,
-		player.Gold, player.XP, player.Level,
+		"Игрок: %s\nКласс: %s\nHP: %d\\%d\nАтака: %d\nЗащита: %d\nЗолото: %d\nXP: %d\\%d\nУровень: %d\n",
+		player.Name, player.Class, player.HP, player.MaxHP, player.Attack, player.Defense,
+		player.Gold, player.XP, XPPerLevel*player.Level, player.Level,
 	)
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
 	bot.Send(msg)
@@ -393,6 +578,9 @@ func showMenu(bot *tgbotapi.BotAPI, chatID int64) {
 			tgbotapi.NewKeyboardButton("🧝‍♀️ Торговец"),
 			tgbotapi.NewKeyboardButton("📋 Статистика"),
 		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("🎒 Инвентарь"),
+		),
 	)
 	msg.ReplyMarkup = buttons
 	bot.Send(msg)
@@ -444,17 +632,39 @@ func updateMonsterHP(monster *Monster, playerDamage int, chatID int64) *stateFig
 }
 
 // из лута только бутылки с хилом
-func lootMobs(chatID int64) {
+func lootMobs(chatID int64, lsBoss bool) string {
 	rand.NewSource(time.Now().UnixMilli())
-	r := rand.Intn(3)
+	r := rand.Intn(6)
+
+	var str string
 	switch r {
 	case 1:
 		potion(chatID, 5) // добавляем 1 potion
+		str = fmt.Sprintln("Вы получили 1 зелье")
+	case 2:
+		// Выпадение случайного предмета
+		items := a.GetItems()
+		randomItem := items[rand.Intn(len(items))]
+
+		a.AddItem(chatID, randomItem)
+
+		str = fmt.Sprintf("Вы получили предмет: 📦 %s!\n", randomItem.Name)
+	default:
+		str = ""
 	}
+	return str
 }
 
 func handleAttack(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID int64, message *tgbotapi.Message) {
 	uph := updateMonsterHP(monster, 0, chatID)
+	if player.Level%4 >= 0 {
+		x := player.Level / 5
+		if x == 0 {
+			x = 1
+		}
+		monster = upgradeMonster(monster, Round(float64(x)))
+	}
+
 	class := a.getClass(player.Class)
 
 	var ulimate *Ultimates
@@ -506,14 +716,14 @@ func handleAttack(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID
 			a.updatePlayer(player)
 			delete(MonsterHP, chatID) // удаляем прошлого монстра
 
-			lootMobs(chatID)
+			loot := lootMobs(chatID, monster.IsBoss)
 
-			msg = tgbotapi.NewMessage(chatID, fmt.Sprintf("Вы победили %s!\nЗолото: %d, Опыт: %d",
-				monster.Name, player.Gold, player.XP))
+			msg = tgbotapi.NewMessage(chatID, fmt.Sprintf("Вы победили %s!\nЗолото: %d, Опыт: %d\n%s",
+				monster.Name, player.Gold, player.XP, loot))
 			bot.Send(msg)
 
 			nextRoom(bot, message)
-			// если босс и побеждем отправляем в меню
+			// если босс и побежден отправляем в меню
 			if monster.IsBoss {
 				delete(counts, chatID)
 				showMenu(bot, chatID)
@@ -534,7 +744,7 @@ func handleAttack(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID
 func handleHeal(bot *tgbotapi.BotAPI, player *Player, message *tgbotapi.Message) {
 	chatID := message.Chat.ID
 	if message.Text == "Заплатить" {
-		player.HP = player.MaxHP
+		a.updatePlayerHP(int(chatID), player.MaxHP)
 		return
 	}
 
@@ -609,8 +819,8 @@ func getMonsterLite(stage int) *Monster {
 		{"Гоблин", 40, 7, 5, 10, 3, false},
 		{"Орк", 60, 10, 7, 8, 5, false},
 		{"Мумия", 65, 13, 6, 6, 6, false},
-		{"🧟‍♀️ Вурдолак", 45, 6, 8, 7, 4, false},
-		{"💀 Скелет воин", 65, 9, 9, 8, 2, false},
+		{"Вурдолак", 45, 6, 8, 7, 4, false},
+		{"Скелет воин", 65, 9, 9, 8, 2, false},
 		{"Демон", 70, 12, 8, 5, 4, false},
 		{"Привидение", 60, 5, 4, 10, 7, false},
 		{"Дракончик", 67, 14, 6, 6, 5, false},
@@ -638,12 +848,12 @@ func getMonsterLite(stage int) *Monster {
 // Boss
 func getMonsterBoss(stage int) *Monster {
 	monsters := []Monster{
-		{"Дракон", 180, 16, 8, 20, 15, true},
-		{"Дракула", 150, 17, 5, 17, 9, true},
-		{"Троль", 190, 15, 7, 26, 8, true},
-		{"Минотавр", 190, 15, 6, 28, 6, true},
-		{"Ледяной гигант", 170, 11, 12, 3, 5, true},
-		{"Костяной дракон", 175, 14, 10, 4, 5, true},
+		{"💀Дракон", 180, 16, 7, 20, 15, true},
+		{"💀Дракула", 150, 17, 5, 17, 9, true},
+		{"💀Троль", 190, 15, 6, 26, 8, true},
+		{"💀Минотавр", 190, 15, 5, 28, 6, true},
+		{"💀Ледяной гигант", 170, 11, 8, 3, 5, true},
+		{"💀Костяной дракон", 175, 14, 7, 4, 5, true},
 		// Name:     "",
 		// HP:       0,
 		// AtkPower: 0,
@@ -768,4 +978,27 @@ func calculateDamage(attacker *Class, target Monster, ulimate *Ultimates) (int, 
 	finalDamage := int(float64(baseDamage) * randomFactor)
 
 	return finalDamage, text
+}
+
+// увеличения сложности мобов
+func upgradeMonster(monster *Monster, up int) *Monster {
+	m := &Monster{
+		Name:     monster.Name,
+		HP:       monster.HP * up,
+		AtkPower: monster.AtkPower * up,
+		Def:      monster.Def - 1*up,
+		XP:       monster.XP * up,
+		Gold:     monster.Gold * up,
+		IsBoss:   monster.IsBoss,
+	}
+
+	return m
+}
+
+func Round(x float64) int {
+	t := math.Trunc(x)
+	if math.Abs(x-t) >= 0.1 {
+		return int(t + math.Copysign(1, x))
+	}
+	return int(t)
 }
