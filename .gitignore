@@ -1,3 +1,4 @@
 *.db
 *.exe
 dungeon*
+.vscode/launch.json

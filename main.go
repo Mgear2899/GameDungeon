@@ -11,7 +11,6 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	// _ "github.com/mattn/go-sqlite3"
 	_ "modernc.org/sqlite"
 )
 
@@ -22,6 +21,7 @@ type Player struct {
 	HP            int
 	Attack        int
 	Defense       int
+	Agility       int
 	Gold          int
 	Stage         int
 	XP            int
@@ -92,7 +92,7 @@ func telebot(bot *tgbotapi.BotAPI) tgbotapi.UpdatesChannel {
 
 func main() {
 	// Инициализация бота
-	bot, err := tgbotapi.NewBotAPI("7524529714:AAHWPV-x44cN9BWIa9JAq_xpyl3Uqbl4dIY")
+	bot, err := tgbotapi.NewBotAPI("")
 	if err != nil {
 		log.Panic("ошибка подключения: ", err)
 	}
@@ -123,6 +123,7 @@ func main() {
 func handleCallbackQuery(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQuery) {
 	// Извлекаем данные из callback-запроса
 	data := callbackQuery.Data
+	bot.Request(tgbotapi.NewCallback(callbackQuery.ID, ""))
 
 	// Проверяем, что это за действие
 	if strings.HasPrefix(data, "action_") {
@@ -134,11 +135,17 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQ
 			return
 		}
 
-		// Выполняем действие с предметом (например, выбираем его)
+		// выбираем предмет
 		selectItem(bot, callbackQuery, itemID)
 	} else if data == "item_sell" {
-		// Обработка действия "Продать"
+		// продажа предмета
 		sellItems(bot, callbackQuery)
+	}
+
+	if len(data) > 0 {
+		chatID := callbackQuery.Message.Chat.ID
+		handleEquip(bot, callbackQuery, chatID)
+
 	}
 
 	// Отправляем ответ на callback-запрос (чтобы убрать "часики" у кнопки)
@@ -152,7 +159,7 @@ func selectItem(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQuery, ite
 	chatID := callbackQuery.Message.Chat.ID
 	ArrayItemShell[chatID] = itemID
 	// Обновляем сообщение с кнопками (если нужно)
-	editMsg := tgbotapi.NewEditMessageText(callbackQuery.Message.Chat.ID, callbackQuery.Message.MessageID, "Предметы:")
+	editMsg := tgbotapi.NewEditMessageText(chatID, callbackQuery.Message.MessageID, "Предметы:")
 	editMsg.ReplyMarkup = updateInlineKeyboard(callbackQuery.Message, itemID) // Функция для обновления клавиатуры
 	if _, err := bot.Send(editMsg); err != nil {
 		log.Printf("Ошибка при обновлении сообщения: %v", err)
@@ -163,15 +170,30 @@ func sellItems(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQuery) {
 	chatID := callbackQuery.Message.Chat.ID
 	itemID := ArrayItemShell[chatID]
 	if itemID > 0 {
-		item := a.PlayerItems(chatID)
-		for _, i := range item {
-			if i.ID == itemID {
-				a.plusPlayerGold(int(chatID), i.Price)
-				break
+		count, iitems := a.PlayerItemCount(chatID)
+		if count == 0 {
+			item := a.PlayerItems(chatID)
+			for _, i := range item {
+				if i.ID == itemID {
+					a.plusPlayerGold(int(chatID), i.Price)
+					break
+				}
+			}
+			a.DeleteItem(itemID, int(chatID)) // создать логику если надето на персоонаже то не удалять
+			a.deleteItem(chatID, itemID)
+			delete(ArrayItemShell, chatID)
+
+		} else {
+		itemBreak:
+			for _, i := range iitems {
+				if i.itemID == itemID {
+					msg := tgbotapi.NewMessage(chatID, "Предмет не продан!")
+					bot.Send(msg)
+					break itemBreak
+				}
 			}
 		}
-		a.deleteItem(chatID, itemID)
-		delete(ArrayItemShell, chatID)
+
 		selectItem(bot, callbackQuery, 0)
 	}
 
@@ -291,8 +313,6 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		showShop(bot, message)
 	case "Инвентарь":
 		showInventory(bot, message)
-	case "Надеть":
-		handleEquipItem(bot, message)
 	case "Торговец":
 		choiceShop(bot, message)
 	}
@@ -334,7 +354,7 @@ func showItem(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 
 	str := "Предмет: %s\n%s - %d ~ %d\nЦена - %d"
 	ItemMap[message.Chat.ID] = item
-	msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf(str, item.Name, item.Stat, item.Value, item.Value+27, item.Price))
+	msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf(str, item.Name, item.Stat, item.Value, item.Value+RandVal[2], item.Price))
 	msg.ReplyMarkup = buttons
 	bot.Send(msg)
 }
@@ -496,8 +516,8 @@ func nextRoom(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 func (player *Player) statisticPlayer(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	// Формируем сообщение с параметрами игрока
 	text := fmt.Sprintf(
-		"Игрок: %s\nКласс: %s\nHP: %d\\%d\nАтака: %d\nЗащита: %d\nЗолото: %d\nXP: %d\\%d\nУровень: %d\n",
-		player.Name, player.Class, player.HP, player.MaxHP, player.Attack, player.Defense,
+		"Игрок: %s\nКласс: %s\nHP: %d\\%d\nАтака: %d\nЗащита: %d\nЛовкость: %d\nЗолото: %d\nXP: %d\\%d\nУровень: %d\n",
+		player.Name, player.Class, player.HP, player.MaxHP, player.Attack, player.Defense, player.Agility,
 		player.Gold, player.XP, XPPerLevel*player.Level, player.Level,
 	)
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
@@ -646,9 +666,17 @@ func lootMobs(chatID int64, lsBoss bool) string {
 		items := a.GetItems()
 		randomItem := items[rand.Intn(len(items))]
 
-		a.AddItem(chatID, randomItem)
+		randomItemNew := Item{
+			ID:    randomItem.ID,
+			Name:  randomItem.Name,
+			Stat:  randomItem.Stat,
+			Value: randomItem.Value,
+			Price: randomItem.Price / 2,
+		}
 
-		str = fmt.Sprintf("Вы получили предмет: 📦 %s!\n", randomItem.Name)
+		a.AddItem(chatID, randomItemNew)
+
+		str = fmt.Sprintf("Вы получили предмет: 📦 %s!\n", randomItemNew.Name)
 	default:
 		str = ""
 	}
@@ -681,7 +709,8 @@ func handleAttack(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID
 		bot.Send(msg)
 
 		// Сражение
-		playerDamage, text := calculateDamage(&class, *monster, ulimate) // player.Attack - monster.Power/2
+		// playerDamage, text := calculateDamage(&class, *monster, ulimate) // player.Attack - monster.Power/2
+		playerDamage, text := calculateDamage(player, *monster, ulimate) // player.Attack - monster.Power/2
 		if playerDamage < 0 {
 			playerDamage = 0
 		}
@@ -949,24 +978,28 @@ func potion(chatID int64, count int) int {
 }
 
 // Калькуляция урона с критом
-func calculateDamage(attacker *Class, target Monster, ulimate *Ultimates) (int, string) {
+func calculateDamage(attacker *Player, target Monster, ulimate *Ultimates) (int, string) {
 	var text string
 	// Инициализируем генератор случайных чисел для критического удара
 	rand.NewSource(time.Now().UnixNano())
 
 	// Базовый урон
-	baseDamage := attacker.BaseAtk + ulimate.Value - target.Def
+	// baseDamage := attacker.BaseAtk + ulimate.Value - target.Def
+	baseDamage := attacker.Attack + ulimate.Value - target.Def
 
 	// Учитываем, что урон не может быть меньше 0
 	if baseDamage < 0 {
 		baseDamage = 0
 	}
 
-	// Критический удар (пример: шанс крита = 20%)
+	// Критический удар
 	critChance := 0.1 // 10% шанс на крит
-	isCrit := rand.Float64() <= critChance
 
-	// Множитель крита (обычно это 2x, но может быть другим)
+	playAgil := float64(attacker.Agility) / float64(100)
+	fmt.Println(playAgil, critChance, critChance+playAgil)
+	isCrit := rand.Float64() <= critChance+playAgil
+
+	// Множитель крита
 	critMultiplier := 2.0
 	if isCrit {
 		text = "Критический удар!"

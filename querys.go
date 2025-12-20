@@ -14,6 +14,9 @@ type App struct {
 	DB *sql.DB
 }
 
+// значения для рандомных характеристик. используется в randomValue и showItem
+var RandVal = []int{1, 3, 5}
+
 func (a *App) ConnDB() {
 	db, err := sql.Open("sqlite", "./files.db")
 	if err != nil {
@@ -52,6 +55,7 @@ func (a *App) createTablesAndDB() {
 		hp INTEGER,
 		attack INTEGER,
 		defense INTEGER,
+		agility INTEGER,
 		gold INTEGER,
 		stage INTEGER,
 		xp INTEGER,
@@ -71,25 +75,36 @@ func (a *App) createTablesAndDB() {
 		progress BOOLEAN,
 		ID       INTEGER
 		);`, `INSERT INTO "items" (name, stat, value, price) VALUES
-("Кольцо Древнего Леса", "HP", 50, 130),
-("Меч Огненной Стужи", "Attack", 75, 70),
-("Щит Светлого Воина", "Defense", 60, 110),
-("Перчатки Ловкости", "Attack", 25, 40),
-("Плащ Призрачной Тени", "Defense", 45, 30),
-("Серебряный Амулет", "HP", 30, 70),
-("Книга Заклинаний", "Attack", 40, 60),
-("Сапоги Ускользания", "Defense", 20, 30),
-("Талисман Мудрости", "HP", 15, 60),
-("Мантия Ледяного Ветра", "Defense", 70, 50),
-("Кристалл Души", "HP", 100, 176),
-("Кинжал Ядовитой Змеи", "Attack", 50, 77),
-("Шлем Легендарного Героя", "Defense", 80, 96),
-("Пояс Силы", "Attack", 60, 99),
-("Эльфийский Лук", "Attack", 90, 158),
-("Сумка Бесконечности", "HP", 20, 60),
-("Чаша Мудрости", "Defense", 40, 50),
-("Медальон Силы", "HP", 10, 39),
-("Перья Летучей Мыши", "Attack", 15, 40);`,
+("Кольцо Древнего Леса", "MAXHP", 8, 75),
+("Меч Огненной Стужи", "Attack", 15, 40),
+("Щит Светлого Воина", "Defense", 12, 65),
+("Перчатки Ловкости", "Attack", 5, 20),
+("Плащ Призрачной Тени", "Defense", 8, 20),
+("Серебряный Амулет", "MAXHP", 7, 40),
+("Книга Заклинаний", "Attack", 8, 35),
+("Сапоги Ускользания", "Defense", 4, 20),
+("Талисман Мудрости", "MAXHP", 3, 35),
+("Мантия Ледяного Ветра", "Defense", 13, 30),
+("Кристалл Души", "MAXHP", 15, 100),
+("Кинжал Ядовитой Змеи", "Attack", 10, 45),
+("Шлем Легендарного Героя", "Defense", 15, 55),
+("Пояс Силы", "Attack", 12, 55),
+("Эльфийский Лук", "Attack", 15, 90),
+("Сумка Бесконечности", "MAXHP", 4, 35),
+("Чаша Мудрости", "Defense", 8, 30),
+("Медальон Силы", "MAXHP", 2, 20),
+("Перья Летучей Мыши", "Attack", 3, 20),
+("Ботинки Стремительного Ветра", "agility", 5, 80),
+("Коготь Гепарда", "agility", 4, 60),
+("Пояс Проворства", "agility", 3, 40),
+("Перстень Ловкача", "agility", 2, 25),
+("Шнурки Скорости", "agility", 1, 15),
+("Поножи Ястреба", "agility", 4, 55),
+("Накидка Хитрого Лиса", "agility", 3, 35),
+("Браслет Рефлексов", "agility", 2, 30),
+("Амулет Гибкости", "agility", 1, 20),
+("Кольцо Молниеносности", "agility", 5, 85),
+("Перчатки Фехтовальщика", "agility", 3, 45);`,
 		`CREATE TABLE IF NOT EXISTS chanTicker (
     name TEXT,
     duration DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -107,6 +122,15 @@ func (a *App) createTablesAndDB() {
     reward TEXT NOT NULL,
     status TEXT NOT NULL,
     required_items TEXT
+);`, `CREATE TABLE player_item_equip (
+    equip_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id   INTEGER NOT NULL,
+    item_id     INTEGER NOT NULL,
+    slot        INTEGER NOT NULL, -- 1 или 2 (слот экипировки)
+    equipped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_player FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
+    CONSTRAINT uq_player_slot UNIQUE (player_id, slot) -- один предмет в один слот
 );`}
 	for _, query := range querys {
 		_, err := a.DB.Exec(query)
@@ -163,19 +187,19 @@ CREATE TABLE IF NOT EXISTS classes (
 
 func (a *App) addPlayer(userID int64, name, class string) {
 	playerClass := a.getClass(class)
-	query := `INSERT INTO players (id, name, class, hp, attack, defense, gold, stage, xp, level, maxhp) VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0, 1, ?)`
-	_, err := a.DB.Exec(query, userID, name, class, playerClass.BaseHP, playerClass.BaseAtk, playerClass.BaseDef, playerClass.BaseHP)
+	query := `INSERT INTO players (id, name, class, hp, attack, defense, agility, gold, stage, xp, level, maxhp) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 0, 1, ?)`
+	_, err := a.DB.Exec(query, userID, name, class, playerClass.BaseHP, playerClass.BaseAtk, playerClass.BaseDef, playerClass.Agility, playerClass.BaseHP)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("addPlayer: ", err)
 	}
 }
 
 func (a *App) getPlayer(userID int64) *Player {
-	query := `SELECT id, name, class, hp, attack, defense, gold, stage, xp, level, maxhp FROM players WHERE id = ?`
+	query := `SELECT id, name, class, hp, attack, defense, agility, gold, stage, xp, level, maxhp FROM players WHERE id = ?`
 	row := a.DB.QueryRow(query, userID)
 
 	var player Player
-	err := row.Scan(&player.ID, &player.Name, &player.Class, &player.HP, &player.Attack, &player.Defense,
+	err := row.Scan(&player.ID, &player.Name, &player.Class, &player.HP, &player.Attack, &player.Defense, &player.Agility,
 		&player.Gold, &player.Stage, &player.XP, &player.Level, &player.MaxHP)
 	if err != nil {
 		return nil
@@ -184,8 +208,8 @@ func (a *App) getPlayer(userID int64) *Player {
 }
 
 func (a *App) updatePlayer(player *Player) {
-	query := `UPDATE players SET hp = ?, attack = ?, defense = ?, gold = ?, stage = ?, xp = ?, level = ?, maxhp = ? WHERE id = ?`
-	_, err := a.DB.Exec(query, player.HP, player.Attack, player.Defense,
+	query := `UPDATE players SET hp = ?, attack = ?, defense = ?, agility = ?, gold = ?, stage = ?, xp = ?, level = ?, maxhp = ? WHERE id = ?`
+	_, err := a.DB.Exec(query, player.HP, player.Attack, player.Defense, player.Agility,
 		player.Gold, player.Stage, player.XP, player.Level, player.MaxHP, player.ID)
 	if err != nil {
 		log.Fatal(err)
@@ -254,9 +278,9 @@ func (a *App) getClass(class string) Class {
 }
 
 // достаем один предмет
-func (a *App) GetItem(name string) Item {
+func (a *App) GetItem(value any) Item {
 	var i Item
-	row := a.DB.QueryRow("SELECT id, name, stat, value, price FROM items WHERE name = ?", name)
+	row := a.DB.QueryRow("SELECT id, name, stat, value, price FROM items WHERE name = ?", value)
 	if row.Err() != nil {
 		fmt.Println(row.Err())
 	}
@@ -324,12 +348,15 @@ func (a *App) UpdateTime(name string, duration time.Duration) {
 // добавляем предмет
 func (a *App) AddItem(chatID int64, item Item) {
 	val := randomValue()
+	fmt.Println(item.Value + val)
+	price := (rand.Intn(val) / 3) - item.Price
+	fmt.Println(rand.Intn(val)/3, price, item.Price)
 	i := Item{
-		ID:    item.ID,
+		// ID:    item.ID,
 		Name:  item.Name,
 		Stat:  item.Stat,
 		Value: item.Value + val,
-		Price: item.Price + rand.Intn(20),
+		Price: item.Price - rand.Intn(val),
 	}
 	_, err := a.DB.Exec("INSERT INTO player_item (id, name, stat, value, price) VALUES (?, ?, ?, ?, ?)", chatID,
 		i.Name, i.Stat, i.Value, i.Price)
@@ -361,6 +388,61 @@ func (a *App) deleteItem(chatID int64, idItem int) {
 	}
 }
 
+// обновляем характеристики игрока
+func (a *App) RecalcStats(chatID int64, stat string, value int, plusMinus string) {
+	query := fmt.Sprintf("UPDATE players SET %s = %s %s ? WHERE id = ?", stat, stat, plusMinus)
+	_, err := a.DB.Exec(query, value, chatID)
+	if err != nil {
+		log.Fatalln("RecalcStats - Exec:", err)
+	}
+}
+
+// подсчет одетых предметов количество и структуру (itemID, slot)
+func (a *App) PlayerItemCount(chatID int64) (int, []struct{ itemID, slot int }) {
+	var count int // , itemID, slot int
+
+	var rows []struct {
+		itemID, slot int
+	}
+
+	a.DB.QueryRow("SELECT COUNT(*) FROM player_item_equip WHERE player_id = ?", chatID).Scan(&count)
+
+	// var rows []int
+	row, err := a.DB.Query(`SELECT item_id, slot FROM player_item_equip WHERE player_id = ?`, chatID)
+	if err != nil {
+		log.Fatalln("PlayerItemCount:", err)
+	}
+	for row.Next() {
+		var rr struct {
+			itemID, slot int
+		}
+		if err := row.Scan(&rr.itemID, &rr.slot); err != nil {
+			log.Println("scan error:", err)
+			continue
+		}
+		rows = append(rows, rr)
+	}
+
+	return count, rows
+}
+
+// одеть предмет
+func (a *App) PlayerItemEquip(playerID, itemID, slot int) {
+	query := `INSERT INTO player_item_equip(player_id, item_id, slot) VALUES (?, ?, ?)`
+	_, err := a.DB.Exec(query, playerID, itemID, slot)
+	if err != nil {
+		log.Fatalln("PlayerItemEquip - Exec:", err)
+	}
+}
+
+// удаляем из player_item_equip
+func (a *App) DeleteItem(itemID, playerID int) {
+	_, err := a.DB.Exec("DELETE FROM player_item_equip WHERE item_id = ? AND player_id = ?", itemID, playerID)
+	if err != nil {
+		log.Fatalln("DeleteItem - Exec:", err)
+	}
+}
+
 // Функция для получения случайного значения с разной вероятностью
 func randomValue() int {
 	rand.NewSource(time.Now().UnixNano())
@@ -368,10 +450,10 @@ func randomValue() int {
 
 	switch {
 	case val < 84: // 70
-		return 10
+		return RandVal[0]
 	case val < 95: // 25
-		return 18
+		return RandVal[1]
 	default: // 5
-		return 27
+		return RandVal[2]
 	}
 }
