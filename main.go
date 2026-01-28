@@ -14,6 +14,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const (
+	StateDungeon = "dungeon"
+	StatePrice   = "price"
+	StateHome    = "home"
+)
+
 type Player struct {
 	ID            int
 	Name          string
@@ -23,7 +29,7 @@ type Player struct {
 	Defense       int
 	Agility       int
 	Gold          int
-	Stage         int
+	Stage         string
 	XP            int
 	Level         int
 	Count         int
@@ -60,6 +66,7 @@ type Skils struct {
 }
 
 type Monster struct {
+	ID       int
 	Name     string
 	HP       int
 	AtkPower int
@@ -67,6 +74,12 @@ type Monster struct {
 	XP       int
 	Gold     int
 	IsBoss   bool
+}
+
+type stateFight struct {
+	monster   *Monster
+	hpmonster int
+	state     bool
 }
 
 const XPPerLevel = 180
@@ -92,7 +105,7 @@ func telebot(bot *tgbotapi.BotAPI) tgbotapi.UpdatesChannel {
 
 func main() {
 	// Инициализация бота
-	bot, err := tgbotapi.NewBotAPI("")
+	bot, err := tgbotapi.NewBotAPI("7524529714:AAHWPV-x44cN9BWIa9JAq_xpyl3Uqbl4dIY")
 	if err != nil {
 		log.Panic("ошибка подключения: ", err)
 	}
@@ -108,6 +121,8 @@ func main() {
 	// Создание таблиц
 	a.createTablesAndDB()
 	a.DeleteTime()
+
+	a.getMonsters()
 
 	for update := range updates {
 		if update.Message != nil {
@@ -229,7 +244,7 @@ func updateInlineKeyboard(message *tgbotapi.Message, itemID int) *tgbotapi.Inlin
 }
 
 func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
-	var monster *Monster
+	// var monster *Monster
 
 	player := a.getPlayer(message.From.ID)
 	if player == nil {
@@ -242,21 +257,19 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 
 	step := countKillPlayer(message.Chat.ID, 0)
 
-	monster = nextMonster(bot, message, step, player, delEmojiMessage)
-
 	getclass := a.getClass(player.Class)
 	i := ItemMap[message.Chat.ID]
 
 	// Основные действия игрока
 	switch delEmojiMessage {
 	case "start":
+		a.updatePlayer(player)
 		msg := tgbotapi.NewMessage(message.Chat.ID, "Добро пожаловать в игру!")
 		bot.Send(msg)
 		showMenu(bot, message.Chat.ID)
 	case "Атака", getclass.Button.Name:
-		// monster = nextMonster(bot, message, monster, step, player, delEmojiMessage)
 		showMenuBattle(bot, message.Chat.ID)
-		handleAttack(bot, player, monster, message.Chat.ID, message)
+		handleAttack(bot, player, message.Chat.ID, message)
 	case "Лечение x":
 		if countPotion[message.Chat.ID] > 0 {
 			pot := potion(message.Chat.ID, 1)
@@ -265,13 +278,21 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 			}
 		}
 	case "Убежать", "Обойти":
-		handleRun(bot, player, monster, message.Chat.ID, step, message.Text)
+		handleRun(bot, player, message.Chat.ID, step, message.Text)
+		mob := a.getMonster(counts[message.Chat.ID])
+		MonsterHP[message.Chat.ID] = &stateFight{mob, mob.HP, true}
+		nextMonster(bot, message, "Подземелье")
 	case "help":
 		class := getclass
 		msg := tgbotapi.NewMessage(message.Chat.ID, class.Button.Help)
 		bot.Send(msg)
 	case "Подземелье":
+		mob := a.getMonster(0)
+		MonsterHP[message.Chat.ID] = &stateFight{mob, mob.HP, true}
+		nextMonster(bot, message, "Подземелье")
 		potion(message.Chat.ID, -1)
+	case "Вперед":
+		nextMonster(bot, message, "Вперед")
 	case "Таверна":
 		showTavern(bot, message.Chat.ID)
 	case "Снять номер":
@@ -281,6 +302,8 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	case "Статистика":
 		player.statisticPlayer(bot, message)
 	case "Выйти из подземелья":
+		player.Stage = StateHome
+		a.updatePlayer(player)
 		delete(counts, message.Chat.ID)
 		showMenu(bot, message.Chat.ID)
 	case "Заплатить":
@@ -486,13 +509,16 @@ func nextRoom(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	r := rand.Intn(len(texts) + 20)
 	var text string
 	if r >= 20 {
-		text = ""
+		text = "Идем дальше"
 	} else {
 		text = texts[r]
 	}
 
 	// Генерируем случайное число: 0 или 1
 	randomValue := rand.Intn(3)
+
+	mob := a.getMonster(counts[message.Chat.ID])
+	MonsterHP[message.Chat.ID] = &stateFight{mob, mob.HP, true}
 
 	// Основные кнопки
 	button := []tgbotapi.KeyboardButton{
@@ -524,18 +550,20 @@ func (player *Player) statisticPlayer(bot *tgbotapi.BotAPI, message *tgbotapi.Me
 	bot.Send(msg)
 }
 
-func nextMonster(bot *tgbotapi.BotAPI, message *tgbotapi.Message, step int, player *Player, text string) *Monster {
-	var monster *Monster
-	if step >= 5 {
-		monster = getMonsterBoss(player.Stage)
-	} else {
-		monster = getMonsterLite(player.Stage)
-	}
+func nextMonster(bot *tgbotapi.BotAPI, message *tgbotapi.Message, text string) *Monster {
+	// monster := a.getMonsterList(step)
+	// if step >= 5 && monster.IsBoss {
+	// 	monster = getMonsterLite(player.Stage)
+	// } else {
+	// 	monster = getMonsterLite(player.Stage)
+	// }
+	m := MonsterHP[message.From.ID]
 
-	if text == "Атака" {
-		return monster
-	} else if text == "Вперед" || text == "Подземелье" {
-		str := fmt.Sprintf("Вы встретили %s!\nВыберите действие:", monster.Name)
+	switch text {
+	case "Атака":
+		return m.monster
+	case "Вперед", "Подземелье":
+		str := fmt.Sprintf("Вы встретили %s!\nВыберите действие:", m.monster.Name)
 		msg := tgbotapi.NewMessage(message.Chat.ID, str)
 		buttons := tgbotapi.NewReplyKeyboard(
 			tgbotapi.NewKeyboardButtonRow(
@@ -549,7 +577,7 @@ func nextMonster(bot *tgbotapi.BotAPI, message *tgbotapi.Message, step int, play
 		msg.ReplyMarkup = buttons
 		bot.Send(msg)
 	}
-	return monster
+	return m.monster
 }
 
 func startGame(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
@@ -626,11 +654,6 @@ func showMenuBattle(bot *tgbotapi.BotAPI, chatID int64) {
 	bot.Send(msg)
 }
 
-type stateFight struct {
-	hpmonster int
-	state     bool
-}
-
 func updateMonsterHP(monster *Monster, playerDamage int, chatID int64) *stateFight {
 	if mon, ok := MonsterHP[chatID]; ok {
 		// Ключ существует
@@ -643,6 +666,7 @@ func updateMonsterHP(monster *Monster, playerDamage int, chatID int64) *stateFig
 	} else {
 		// Ключа нет, создаем новый объект
 		MonsterHP[chatID] = &stateFight{
+			monster:   monster,
 			hpmonster: monster.HP,
 			state:     true,
 		}
@@ -683,14 +707,16 @@ func lootMobs(chatID int64, lsBoss bool) string {
 	return str
 }
 
-func handleAttack(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID int64, message *tgbotapi.Message) {
-	uph := updateMonsterHP(monster, 0, chatID)
+func handleAttack(bot *tgbotapi.BotAPI, player *Player, chatID int64, message *tgbotapi.Message) {
+	var monster *Monster
+	mob := MonsterHP[message.Chat.ID]
+	uph := updateMonsterHP(mob.monster, 0, chatID)
 	if player.Level%4 >= 0 {
 		x := player.Level / 5
 		if x == 0 {
 			x = 1
 		}
-		monster = upgradeMonster(monster, Round(float64(x)))
+		monster = upgradeMonster(mob.monster, Round(float64(x)))
 	}
 
 	class := a.getClass(player.Class)
@@ -736,10 +762,11 @@ func handleAttack(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID
 				monster.Name, monsterDamage, player.HP))
 			bot.Send(msg)
 		} else {
+			// убили монстра
 			countKillPlayer(chatID, 1)
 			player.XP += monster.XP
 			player.Gold += monster.Gold
-			player.Stage++
+			player.Stage = StateDungeon
 
 			levelUp(bot, player, chatID)
 			a.updatePlayer(player)
@@ -754,6 +781,7 @@ func handleAttack(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID
 			nextRoom(bot, message)
 			// если босс и побежден отправляем в меню
 			if monster.IsBoss {
+				player.Stage = StateHome
 				delete(counts, chatID)
 				showMenu(bot, chatID)
 			}
@@ -793,9 +821,11 @@ func handleHeal(bot *tgbotapi.BotAPI, player *Player, message *tgbotapi.Message)
 }
 
 // Бегство от монстра, при провале получение урона.
-func handleRun(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID int64, step int, text string) {
+func handleRun(bot *tgbotapi.BotAPI, player *Player, chatID int64, step int, text string) {
 	rand.NewSource(time.Now().UnixMicro())
 	ran := rand.Intn(a.getClass(player.Class).Agility)
+
+	monster := MonsterHP[chatID].monster
 
 	if text == "Обойти" {
 		if ran == 0 {
@@ -808,7 +838,7 @@ func handleRun(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID in
 			msg := tgbotapi.NewMessage(chatID, text[r])
 			bot.Send(msg)
 		} else {
-			player.Stage++
+			player.Stage = StateDungeon
 			a.updatePlayer(player)
 			msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Вы успешно обошли %d монстра.", step))
 			bot.Send(msg)
@@ -834,7 +864,7 @@ func handleRun(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID in
 		bot.Send(msg)
 		showMenuBattle(bot, chatID)
 	} else {
-		player.Stage++
+		player.Stage = StateDungeon
 		a.updatePlayer(player)
 		msg := tgbotapi.NewMessage(chatID, "Вы убежали от монстра.")
 		bot.Send(msg)
@@ -842,58 +872,26 @@ func handleRun(bot *tgbotapi.BotAPI, player *Player, monster *Monster, chatID in
 	}
 }
 
-// monster
-func getMonsterLite(stage int) *Monster {
-	monsters := []Monster{
-		{"Гоблин", 40, 7, 5, 10, 3, false},
-		{"Орк", 60, 10, 7, 8, 5, false},
-		{"Мумия", 65, 13, 6, 6, 6, false},
-		{"Вурдолак", 45, 6, 8, 7, 4, false},
-		{"Скелет воин", 65, 9, 9, 8, 2, false},
-		{"Демон", 70, 12, 8, 5, 4, false},
-		{"Привидение", 60, 5, 4, 10, 7, false},
-		{"Дракончик", 67, 14, 6, 6, 5, false},
-		{"Леший", 65, 11, 7, 5, 6, false},
-		{"Сирена", 55, 8, 5, 9, 6, false},
-		{"Гигантский паук", 55, 10, 5, 7, 4, false},
-		{"Зомби", 45, 6, 7, 6, 3, false},
-		{"Фея", 40, 4, 3, 12, 8, false},
-		{"Тень", 35, 7, 6, 11, 6, false},
-		{"Водяной дух", 65, 9, 5, 8, 7, false},
-		{"Суккуб", 55, 10, 4, 9, 7, false},
-		// Name:     "",
-		// HP:       0,
-		// AtkPower: 0,
-		// Def:      0,
-		// XP:       XPPerLevel,
-		// Gold:     0,
-		// Boss: bool
+// monsters
+func (a *App) getMonster(stage int) *Monster {
+	var mobs []*Monster
+	for _, m := range a.Monsters {
+		if stage >= 5 {
+			if m.IsBoss {
+				mobs = append(mobs, m)
+			}
+		} else {
+			if !m.IsBoss {
+				mobs = append(mobs, m)
+			}
+		}
 	}
 
-	rand.NewSource(time.Now().UnixNano())
-	return &monsters[stage%len(monsters)]
-}
-
-// Boss
-func getMonsterBoss(stage int) *Monster {
-	monsters := []Monster{
-		{"💀Дракон", 180, 16, 7, 20, 15, true},
-		{"💀Дракула", 150, 17, 5, 17, 9, true},
-		{"💀Троль", 190, 15, 6, 26, 8, true},
-		{"💀Минотавр", 190, 15, 5, 28, 6, true},
-		{"💀Ледяной гигант", 170, 11, 8, 3, 5, true},
-		{"💀Костяной дракон", 175, 14, 7, 4, 5, true},
-		// Name:     "",
-		// HP:       0,
-		// AtkPower: 0,
-		// Def:      0,
-		// XP:       XPPerLevel,
-		// Gold:     0,
-		// Boss: bool
+	if len(mobs) == 0 {
+		return a.Monsters[0]
 	}
 
-	rand.NewSource(time.Now().UnixNano())
-	return &monsters[stage%len(monsters)]
+	return mobs[rand.Intn(len(mobs))]
 }
 
 // расчет повышения уровня
@@ -1035,3 +1033,8 @@ func Round(x float64) int {
 	}
 	return int(t)
 }
+
+// func (a *App) newMob() {
+// 	mob := a.getMonsterList(0)
+// 	MonsterHP[message.Chat.ID] = &stateFight{mob, mob.HP, true}
+// }

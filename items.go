@@ -125,16 +125,3 @@ func handleEquip(bot *tgbotapi.BotAPI, cq *tgbotapi.CallbackQuery, playerID int6
 		fmt.Sprintf(text, name, stat, value))
 	bot.Send(msg)
 }
-
-// newText := ""
-// 			if update.CallbackQuery.Data == "opt1" {
-// 				newText = "Вы выбрали опцию 1 ✅"
-// 			} else {
-// 				newText = "Вы выбрали опцию 2 ✅"
-// 			}
-
-// 			edit := tgbotapi.NewEditMessageText(
-// 				update.CallbackQuery.Message.Chat.ID,
-// 				update.CallbackQuery.Message.MessageID,
-// 				newText,
-// 			)

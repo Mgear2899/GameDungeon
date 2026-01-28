@@ -11,14 +11,17 @@ import (
 )
 
 type App struct {
-	DB *sql.DB
+	DB       *sql.DB
+	Monsters []*Monster
 }
+
+const database = "files.db"
 
 // значения для рандомных характеристик. используется в randomValue и showItem
 var RandVal = []int{1, 3, 5}
 
 func (a *App) ConnDB() {
-	db, err := sql.Open("sqlite", "./files.db")
+	db, err := sql.Open("sqlite", "./"+database)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -32,12 +35,12 @@ func CraeteDataBase() {
 		log.Fatalln(err)
 	}
 	for _, f := range file {
-		if f.Name() == "files.db" {
+		if f.Name() == database {
 			return
 		}
 	}
 	// Подготовка команды sqlite3 files.db
-	cmd := exec.Command("sqlite3", "files.db")
+	cmd := exec.Command("sqlite3", database)
 
 	// Запуск команды
 	err = cmd.Run()
@@ -57,7 +60,7 @@ func (a *App) createTablesAndDB() {
 		defense INTEGER,
 		agility INTEGER,
 		gold INTEGER,
-		stage INTEGER,
+		stage TEXT,
 		xp INTEGER,
 		level INTEGER,
 		maxhp INTEGER
@@ -75,36 +78,36 @@ func (a *App) createTablesAndDB() {
 		progress BOOLEAN,
 		ID       INTEGER
 		);`, `INSERT INTO "items" (name, stat, value, price) VALUES
-("Кольцо Древнего Леса", "MAXHP", 8, 75),
-("Меч Огненной Стужи", "Attack", 15, 40),
-("Щит Светлого Воина", "Defense", 12, 65),
-("Перчатки Ловкости", "Attack", 5, 20),
-("Плащ Призрачной Тени", "Defense", 8, 20),
-("Серебряный Амулет", "MAXHP", 7, 40),
-("Книга Заклинаний", "Attack", 8, 35),
-("Сапоги Ускользания", "Defense", 4, 20),
-("Талисман Мудрости", "MAXHP", 3, 35),
-("Мантия Ледяного Ветра", "Defense", 13, 30),
-("Кристалл Души", "MAXHP", 15, 100),
-("Кинжал Ядовитой Змеи", "Attack", 10, 45),
-("Шлем Легендарного Героя", "Defense", 15, 55),
-("Пояс Силы", "Attack", 12, 55),
-("Эльфийский Лук", "Attack", 15, 90),
-("Сумка Бесконечности", "MAXHP", 4, 35),
-("Чаша Мудрости", "Defense", 8, 30),
-("Медальон Силы", "MAXHP", 2, 20),
-("Перья Летучей Мыши", "Attack", 3, 20),
-("Ботинки Стремительного Ветра", "agility", 5, 80),
-("Коготь Гепарда", "agility", 4, 60),
-("Пояс Проворства", "agility", 3, 40),
-("Перстень Ловкача", "agility", 2, 25),
-("Шнурки Скорости", "agility", 1, 15),
-("Поножи Ястреба", "agility", 4, 55),
-("Накидка Хитрого Лиса", "agility", 3, 35),
-("Браслет Рефлексов", "agility", 2, 30),
-("Амулет Гибкости", "agility", 1, 20),
-("Кольцо Молниеносности", "agility", 5, 85),
-("Перчатки Фехтовальщика", "agility", 3, 45);`,
+("Кольцо Древнего Леса", "MAXHP", 15, 120),
+("Меч Огненной Стужи", "Attack", 15, 300),
+("Щит Светлого Воина", "Defense", 12, 180),
+("Перчатки Ловкости", "Attack", 5, 80),
+("Плащ Призрачной Тени", "Defense", 8, 100),
+("Серебряный Амулет", "MAXHP", 12, 90),
+("Книга Заклинаний", "Attack", 8, 140),
+("Сапоги Ускользания", "Defense", 4, 50),
+("Талисман Мудрости", "MAXHP", 10, 70),
+("Мантия Ледяного Ветра", "Defense", 13, 200),
+("Кристалл Души", "MAXHP", 25, 250),
+("Кинжал Ядовитой Змеи", "Attack", 10, 180),
+("Шлем Легендарного Героя", "Defense", 15, 250),
+("Пояс Силы", "Attack", 12, 220),
+("Эльфийский Лук", "Attack", 15, 320),
+("Сумка Бесконечности", "MAXHP", 8, 60),
+("Чаша Мудрости", "Defense", 8, 110),
+("Медальон Силы", "MAXHP", 5, 40),
+("Перья Летучей Мыши", "Attack", 3, 40),
+("Ботинки Стремительного Ветра", "agility", 5, 350),
+("Коготь Гепарда", "agility", 4, 250),
+("Пояс Проворства", "agility", 3, 170),
+("Перстень Ловкача", "agility", 2, 90),
+("Шнурки Скорости", "agility", 1, 40),
+("Поножи Ястреба", "agility", 4, 260),
+("Накидка Хитрого Лиса", "agility", 3, 160),
+("Браслет Рефлексов", "agility", 2, 100),
+("Амулет Гибкости", "agility", 1, 45),
+("Кольцо Молниеносности", "agility", 5, 380),
+("Перчатки Фехтовальщика", "agility", 3, 180);`,
 		`CREATE TABLE IF NOT EXISTS chanTicker (
     name TEXT,
     duration DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -131,7 +134,60 @@ func (a *App) createTablesAndDB() {
 
     CONSTRAINT fk_player FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
     CONSTRAINT uq_player_slot UNIQUE (player_id, slot) -- один предмет в один слот
-);`}
+);`,
+		`CREATE TABLE IF NOT EXISTS monsters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    hp INTEGER,
+    atk_power INTEGER,
+    def INTEGER,
+    xp INTEGER,
+    gold INTEGER,
+    is_boss BOOLEAN
+);`,
+		`INSERT INTO monsters (name, hp, atk_power, def, xp, gold, is_boss) VALUES 
+('Кобольд-разведчик', 35, 6, 2, 15, 10, 0),
+('Гоблин', 45, 8, 4, 20, 15, 0),
+('Фея', 40, 10, 2, 25, 20, 0),
+('Зомби', 60, 10, 5, 25, 12, 0),
+('Вурдолак', 65, 12, 6, 30, 20, 0),
+('Скелет воин', 75, 11, 9, 35, 25, 0),
+('Орк', 90, 14, 8, 45, 35, 0),
+('Мумия', 85, 15, 7, 50, 40, 0),
+('Привидение', 55, 18, 3, 55, 45, 0),
+('Сирена', 70, 16, 5, 60, 50, 0),
+('Гигантский паук', 80, 17, 6, 65, 55, 0),
+('Тень', 60, 22, 4, 70, 60, 0),
+('Дракончик', 95, 19, 10, 80, 75, 0),
+('Леший', 110, 16, 12, 85, 70, 0),
+('Суккуб', 90, 21, 8, 90, 85, 0),
+('Гарпия', 85, 20, 7, 95, 90, 0),
+('Водяной дух', 75, 14, 10, 60, 50, 0),
+('Темный культист', 95, 20, 8, 100, 80, 0),
+('Минотавр-рекрут', 120, 22, 12, 110, 90, 0),
+('Ледяной голем', 140, 18, 18, 120, 100, 0),
+('Огненный элементаль', 100, 26, 6, 115, 95, 0),
+('Василиск', 110, 21, 14, 130, 110, 0),
+('Мимик', 80, 25, 15, 150, 500, 0),
+('Химера', 130, 24, 13, 160, 140, 0),
+('💀Троль', 400, 35, 20, 800, 600, 1),
+('💀Дракула', 450, 45, 15, 1000, 800, 1),
+('💀Дракон', 600, 50, 30, 1500, 1200, 1),
+('💀Ледяной гигант', 580, 42, 35, 1600, 1100, 1),
+('💀Костяной дракон', 550, 55, 25, 1650, 1150, 1),
+('💀Минотавр', 650, 48, 28, 1700, 1300, 1),
+('💀Медуза Горгона', 420, 46, 20, 1800, 1400, 1),
+('💀Черная Вдова', 400, 52, 18, 1900, 1450, 1),
+('💀Анубис', 520, 48, 30, 2000, 1500, 1),
+('💀Химера-переросток', 500, 54, 25, 2100, 1600, 1),
+('💀Железный Голем', 850, 40, 55, 2500, 2000, 1),
+('💀Верховный Лич', 480, 65, 20, 3000, 2500, 1),
+('💀Огненный Феникс', 450, 70, 15, 3200, 2800, 1),
+('💀Хранитель леса', 750, 50, 40, 3500, 3000, 1),
+('💀Кракен', 900, 60, 35, 4000, 3500, 1),
+('💀Падший Ангел', 700, 75, 30, 4500, 4000, 1),
+('💀Теневой Жнец', 550, 85, 25, 4800, 4500, 1),
+('💀Повелитель Бездны', 1200, 90, 45, 10000, 10000, 1);`}
 	for _, query := range querys {
 		_, err := a.DB.Exec(query)
 		if err != nil {
@@ -155,13 +211,13 @@ CREATE TABLE IF NOT EXISTS classes (
     value_base_def INTEGER,
     value_agility INTEGER
 );`, `INSERT INTO classes (name, base_hp, base_atk, base_def, agility) VALUES 
-("Воин", 150, 20, 10, 4),
-("Маг", 100, 30, 5, 3),
-("Лучник", 120, 25, 7, 4),
-("Некромант", 110, 28, 6, 3),
-("Жрец", 90, 15, 8, 3),
-("Паладин", 140, 22, 12, 3),
-("Тёмный Рыцарь", 130, 27, 9, 3);`,
+("Воин",160,18,12,3),
+("Маг",90,28,4,5),
+("Лучник",110,22,7,8),
+("Некромант",105,25,6,4),
+("Жрец",120,15,10,4),
+("Паладин",150,20,15,2),
+("Тёмный Рыцарь",140,24,10,3);`,
 		`INSERT INTO skills (name, name_skill, help, value_base_hp, value_base_atk, value_base_def, value_agility) VALUES
 ("Воин", "Оборона", "Способность война: Оборона\nВоин прикрывается щитом и получает 0 урона.", 0, 0, 0, 0),
 ("Маг", "Ледяная глыба", "Способность маг: Ледяная глыба\nМаг превращается в глыбу и при этом не получает урон.", 0, 0, 0, 0),
@@ -187,7 +243,7 @@ CREATE TABLE IF NOT EXISTS classes (
 
 func (a *App) addPlayer(userID int64, name, class string) {
 	playerClass := a.getClass(class)
-	query := `INSERT INTO players (id, name, class, hp, attack, defense, agility, gold, stage, xp, level, maxhp) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 0, 1, ?)`
+	query := `INSERT INTO players (id, name, class, hp, attack, defense, agility, gold, stage, xp, level, maxhp) VALUES (?, ?, ?, ?, ?, ?, ?, 0, "home", 0, 1, ?)`
 	_, err := a.DB.Exec(query, userID, name, class, playerClass.BaseHP, playerClass.BaseAtk, playerClass.BaseDef, playerClass.Agility, playerClass.BaseHP)
 	if err != nil {
 		log.Fatal("addPlayer: ", err)
@@ -456,4 +512,24 @@ func randomValue() int {
 	default: // 5
 		return RandVal[2]
 	}
+}
+
+// получаем список монстров и боссов
+func (a *App) getMonsters() {
+	mobs, err := a.DB.Query("select id, name, hp, atk_power, def, xp, gold, is_boss FROM monsters")
+	if err != nil {
+		log.Fatalln("getMonsters - Query:", err)
+	}
+	var monster []*Monster
+	for mobs.Next() {
+		mob := new(Monster)
+		// name, hp, atk_power, def, xp, gold, is_boss
+		if err := mobs.Scan(&mob.ID, &mob.Name, &mob.HP, &mob.AtkPower, &mob.Def, &mob.XP, &mob.Gold, &mob.IsBoss); err != nil {
+			log.Fatalln("getMonsters - mobs.Next:", err)
+		}
+
+		monster = append(monster, mob)
+	}
+	a.Monsters = monster
+	// return monster
 }
