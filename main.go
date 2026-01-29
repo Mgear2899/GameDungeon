@@ -105,7 +105,7 @@ func telebot(bot *tgbotapi.BotAPI) tgbotapi.UpdatesChannel {
 
 func main() {
 	// Инициализация бота
-	bot, err := tgbotapi.NewBotAPI("7524529714:AAHWPV-x44cN9BWIa9JAq_xpyl3Uqbl4dIY")
+	bot, err := tgbotapi.NewBotAPI("")
 	if err != nil {
 		log.Panic("ошибка подключения: ", err)
 	}
@@ -1038,3 +1038,4 @@ func Round(x float64) int {
 // 	mob := a.getMonsterList(0)
 // 	MonsterHP[message.Chat.ID] = &stateFight{mob, mob.HP, true}
 // }
+
