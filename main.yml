@@ -4,4 +4,4 @@ jobs:
     container: golang:1.22
     steps:
       - uses: actions/checkout@v4
-      - run: go run .
+      - run: go run ./main.go
