@@ -1,0 +1,7 @@
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    container: golang:1.22
+    steps:
+      - uses: actions/checkout@v4
+      - run: go run .
